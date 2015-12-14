@@ -106,6 +106,67 @@ class Api(object):
         body = json.dumps({'bri': int(pct * 254 / 100), 'on': True})
         return self.s.put(self.url + ('lights/%d/state' % (light, )), body).json()
 
+    def config(self, changes=None):
+        url = self.url + 'config'
+        if not changes:
+            return self.s.get(url).json()
+        else:
+            body = json.dumps(changes)
+            return self.s.put(url, body).json()
+
+
+def do_swupdate(api):
+    config = api.config()
+    print("Current bridge software version:", config['swversion'])
+    if not config['portalstate']['signedon']:
+        print("Bridge not connected to portal, swupdate not possible.")
+        raise CliFatalError()
+    api.config({'swupdate': {'checkforupdate': True}})
+    config = api.config()
+    while config['swupdate']['checkforupdate'] is True:
+        time.sleep(1)
+        config = api.config()
+
+    if config['swupdate']['updatestate'] == 1:
+        print("Software download in progress...")
+        while ['swupdate']['updatestate'] == 1:
+            time.sleep(1)
+            config = api.config()
+
+    if config['swupdate']['updatestate'] == 2:
+        print("New software found, starting update...")
+        #api.config({'swupdate': {'updatestate': 3}})
+        print("Update will affect these components:")
+        if config['swupdate']['bridge']:
+            print("  - bridge")
+        for light in config['swupdate']['lights']:
+            print("  - light %s", (light, ))
+        for sensor in config['swupdate']['sensors']:
+            print("  - sensor %s", (sensor, ))
+    elif config['swupdate']['updatestate'] == 0:
+        print("No new software found.")
+        return
+    elif config['swupdate']['updatestate'] == 3:
+        print("Update already in progress...")
+    else:
+        print("Unknown updatestate %s", (config['swupdate']['updatestate'], ))
+        raise CliFatalError()
+
+    while True:
+        try:
+            config = api.config()
+            if config['swupdate']['notify']:
+                break
+            time.sleep(1)
+        except requests.exceptions.ConnectTimeout:
+            print("Bridge unavailable, waiting...")
+            time.sleep(3)
+
+    print(config['swupdate']['url'])
+    print(config['swupdate']['text'])
+    # clear notify flag
+    api.config({'swupdate': {'notify': False}})
+
 
 def main():
     global prefs
@@ -136,6 +197,8 @@ def main():
     elif command == 'off':
         light = int(args[0])
         print(api.set_onoff(light, False))
+    elif command == 'swupdate':
+        do_swupdate(api)
     else:
         print("Unknown command given.")
         raise CliFatalError()
