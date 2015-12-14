@@ -199,6 +199,13 @@ def main():
         print(api.set_onoff(light, False))
     elif command == 'swupdate':
         do_swupdate(api)
+    elif command == 'help':
+        print("Usage:")
+        print("huectl list             - list lights")
+        print("huectl dim ID pct       - dim light ID to percent pct%")
+        print("huectl on ID            - turn on light ID")
+        print("huectl off ID           - turn off light ID")
+        print("huectl swupdate         - update hue system software (no prompting)")
     else:
         print("Unknown command given.")
         raise CliFatalError()
