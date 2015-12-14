@@ -6,9 +6,14 @@ import os
 import time
 import socket
 import copy
+from pprint import pprint
 
 prefs = {}
 prefs_old = None
+
+GROUP_ALL = 0   # A special group containing all lights in the system,
+                # and is not returned by the ‘get all groups’ command.
+
 
 class CliFatalError(Exception):
     pass
@@ -95,16 +100,33 @@ class Api(object):
     def lights(self):
         return self.s.get(self.url + 'lights').json()
 
-    def info(self, light):
-        return self.s.get(self.url + ('lights/%d' % (light, ))).json()
+    def info(self, lightid):
+        return self.s.get(self.url + ('lights/%d' % (lightid, ))).json()
 
-    def set_onoff(self, light, onoff):
+    def set_onoff(self, lightid, onoff):
         body = json.dumps({'on': bool(onoff)})
-        return self.s.put(self.url + ('lights/%d/state' % (light, )), body).json()
+        return self.s.put(self.url + ('lights/%d/state' % (lightid, )), body).json()
 
-    def dim(self, light, pct):
+    def dim(self, lightid, pct):
         body = json.dumps({'bri': int(pct * 254 / 100), 'on': True})
-        return self.s.put(self.url + ('lights/%d/state' % (light, )), body).json()
+        return self.s.put(self.url + ('lights/%d/state' % (lightid, )), body).json()
+
+    def scene(self, sceneid):
+        return self.s.get(self.url + 'scenes/%s' % (sceneid, )).json()
+
+    def scenes(self):
+        return self.s.get(self.url + 'scenes').json()
+
+    def sensors(self):
+        return self.s.get(self.url + 'sensors').json()
+
+    def group_action(self, groupid, changes):
+        body = json.dumps(changes)
+        return self.s.put(self.url + ('groups/%s/action' % (groupid, )), body).json()
+
+    def recall_scene(self, sceneid):
+        changes = {'scene': sceneid}
+        return self.group_action(GROUP_ALL, changes)
 
     def config(self, changes=None):
         url = self.url + 'config'
@@ -184,9 +206,9 @@ def main():
         args = sys.argv[2:]
 
     if command == 'list':
-        lights = api.lights()
-        for lightid, detail in lights.items():
-            print("%-5s %-30s %-25s %s" % (lightid, detail['name'], detail['type'], detail['state']))
+        items = api.lights()
+        for id_, detail in sorted(items.items(), key=lambda kv: kv[0]):
+            print("%-5s %-30s %-25s %s" % (id_, detail['name'], detail['type'], detail['state']))
     elif command == 'dim':
         light = int(args[0])
         pct = int(args[1])
@@ -197,6 +219,38 @@ def main():
     elif command == 'off':
         light = int(args[0])
         print(api.set_onoff(light, False))
+    elif command == 'scene':
+        print(api.recall_scene(args[0]))
+    elif command == 'scene-detail':
+        scene = api.scene(args[0])
+        flags = [('locked' if scene.get('locked', False) else ''),
+                 ('recycle' if scene.get('recycle', True) else ''),
+                 ('v' + str(scene.get('version', 1)))]
+        flags = [x for x in flags if x]
+        print("ID:      ", args[0])
+        print("Name:    ", scene['name'])
+        print("Lights:  ", ' '.join(sorted(scene['lights'])))
+        print("Flags:   ", ' '.join(flags))
+        if scene.get('owner', 'none') != 'none':
+            # 1.11+
+            print("Owner:   ", scene['owner'])
+        if scene.get('lastupdated', None):
+            # 1.11+, may be null for v1 data
+            print("Changed:   ", scene['lastupdated'])
+        if scene.get('lightstates', None):
+            # 1.11+, may be null for v1 data
+            for id_, detail in sorted(scene.get('lightstates', None).items(), key=lambda kv: kv[0]):
+                print("%-15s %3s %-5s %-10s %-10s %-10s" % (id_, 'on' if detail['on'] else 'off',
+                      detail.get('bri', ''), detail.get('xy', ''), detail.get('hs', ''), detail.get('ct', '')))
+        # we don't print appdata, picture (for now)
+    elif command == 'scenes':
+        items = api.scenes()
+        for id_, detail in sorted(items.items(), key=lambda kv: kv[0]):
+            print("%-15s %-32s %-10s" % (id_, detail['name'], ' '.join(detail['lights'])))
+    elif command == 'sensors':
+        items = api.sensors()
+        for id_, detail in sorted(items.items(), key=lambda kv: kv[0]):
+            print("%-5s %-30s %-15s %s" % (id_, detail['name'], detail['type'], detail['state']))
     elif command == 'swupdate':
         do_swupdate(api)
     elif command == 'help':
@@ -205,6 +259,10 @@ def main():
         print("huectl dim ID pct       - dim light ID to percent pct%")
         print("huectl on ID            - turn on light ID")
         print("huectl off ID           - turn off light ID")
+        print("huectl scenes           - list scenes")
+        print("huectl scene ID         - activate scene ID")
+        print("huectl scene-detail ID  - get scene ID (bridge v1.11+)")
+        print("huectl sensors          - list sensors")
         print("huectl swupdate         - update hue system software (no prompting)")
     else:
         print("Unknown command given.")
