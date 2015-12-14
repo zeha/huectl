@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+import json
+import requests
+import sys
+import os
+import time
+import socket
+import copy
+
+prefs = {}
+prefs_old = None
+
+class CliFatalError(Exception):
+    pass
+
+
+def preffilename():
+    if sys.platform == 'darwin':
+        tpl = '~/Library/Preferences/huectl.json'
+    else:
+        tpl = '%s/huectl/config.json' % (sys.environ.get('XDG_CONFIG_HOME', '~/.config'), )
+    return os.path.expanduser(tpl)
+
+
+def prefs_load():
+    global prefs, prefs_old
+    try:
+        with open(preffilename(), 'r') as fp:
+            prefs = json.load(fp)
+            prefs_old = copy.deepcopy(prefs)
+    except:
+        prefs = {}
+
+
+def prefs_save():
+    global prefs, prefs_old
+    if prefs_old == prefs:
+        return
+    with open(preffilename(), 'w') as fp:
+        json.dump(prefs, fp)
+
+
+def discover():
+    """Find hue bridge using meethue rendezvous point. As this is quite slow,
+    try a cached IP first.""" 
+    global prefs
+    if 'bridge_cache' in prefs:
+        try:
+            bridgeip = prefs['bridge_cache']['ip']
+            reply = requests.get('http://%s/api/' % (bridgeip), timeout=3).json()
+            if len(reply) > 0 and 'error' in reply[0] and reply[0]['error']['type'] == 4:
+                # good bridge, use it
+                return bridgeip
+        except requests.exceptions.ConnectTimeout:
+            # fallback to rendezvous point
+            pass
+
+    print("Discovering bridge...")
+    try:
+        bridgeip = requests.get('https://www.meethue.com/api/nupnp').json()[0]['internalipaddress']
+        prefs['bridge_cache'] = {'ip': bridgeip}
+        return bridgeip
+    except Exception as except_inst:
+        print("Bridge discovery failed:", except_inst)
+        raise CliFatalError()
+
+
+def link(bridgeip):
+    """Request username from bridge. User has to press the LINK button while
+    doing this."""
+    body = json.dumps({'devicetype': 'huectl#' + socket.gethostname()})
+    maxtries = 30
+    sys.stdout.write("Press link button on bridge %s now..." % bridgeip)
+    sys.stdout.flush()
+    for try_ in range(0, maxtries):
+        reg = requests.post('http://%s/api' % (bridgeip, ), body).json()
+        if 'error' in reg[0] and reg[0]['error']['type'] == 101:
+            sys.stdout.write(".")
+            sys.stdout.flush()
+        else:
+            prefs['username'] = reg[0]['success']['username']
+            prefs_save()
+            print()
+            return
+        time.sleep(1)
+    print("\nExpired. Please try again.")
+    raise CliFatalError()
+
+
+class Api(object):
+    def __init__(self, bridgeip, username):
+        self.url = 'http://%s/api/%s/' % (bridgeip, username)
+        self.s = requests.Session()
+
+    def lights(self):
+        return self.s.get(self.url + 'lights').json()
+
+    def info(self, light):
+        return self.s.get(self.url + ('lights/%d' % (light, ))).json()
+
+    def set_onoff(self, light, onoff):
+        body = json.dumps({'on': bool(onoff)})
+        return self.s.put(self.url + ('lights/%d/state' % (light, )), body).json()
+
+    def dim(self, light, pct):
+        body = json.dumps({'bri': int(pct * 254 / 100), 'on': True})
+        return self.s.put(self.url + ('lights/%d/state' % (light, )), body).json()
+
+
+def main():
+    global prefs
+    prefs_load()
+    bridgeip = discover()
+    if 'username' not in prefs:
+        link(bridgeip)
+
+    api = Api(bridgeip, prefs['username'])
+    if len(sys.argv) == 1:
+        command = 'list'
+        args = []
+    else:
+        command = sys.argv[1]
+        args = sys.argv[2:]
+
+    if command == 'list':
+        lights = api.lights()
+        for lightid, detail in lights.items():
+            print("%-5s %-30s %-25s %s" % (lightid, detail['name'], detail['type'], detail['state']))
+    elif command == 'dim':
+        light = int(args[0])
+        pct = int(args[1])
+        print(api.dim(light, pct))
+    elif command == 'on':
+        light = int(args[0])
+        print(api.set_onoff(light, True))
+    elif command == 'off':
+        light = int(args[0])
+        print(api.set_onoff(light, False))
+    else:
+        print("Unknown command given.")
+        raise CliFatalError()
+
+    prefs_save()
+
+
+try:
+    main()
+except CliFatalError:
+    sys.exit(1)
