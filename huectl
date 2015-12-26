@@ -156,15 +156,15 @@ def do_swupdate(api):
             config = api.config()
 
     if config['swupdate']['updatestate'] == 2:
-        print("New software found, starting update...")
-        #api.config({'swupdate': {'updatestate': 3}})
+        print("New software \"%s\" found, starting update..." % (config['swupdate']['text']))
         print("Update will affect these components:")
-        if config['swupdate']['bridge']:
+        if config['swupdate']['devicetypes']['bridge']:
             print("  - bridge")
-        for light in config['swupdate']['lights']:
+        for light in config['swupdate']['devicetypes']['lights']:
             print("  - light %s", (light, ))
-        for sensor in config['swupdate']['sensors']:
+        for sensor in config['swupdate']['devicetypes']['sensors']:
             print("  - sensor %s", (sensor, ))
+        api.config({'swupdate': {'updatestate': 3}})
     elif config['swupdate']['updatestate'] == 0:
         print("No new software found.")
         return
