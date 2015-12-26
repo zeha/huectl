@@ -23,7 +23,7 @@ def preffilename():
     if sys.platform == 'darwin':
         tpl = '~/Library/Preferences/huectl.json'
     else:
-        tpl = '%s/huectl/config.json' % (sys.environ.get('XDG_CONFIG_HOME', '~/.config'), )
+        tpl = '%s/huectl/config.json' % (os.environ.get('XDG_CONFIG_HOME', '~/.config'), )
     return os.path.expanduser(tpl)
 
 
